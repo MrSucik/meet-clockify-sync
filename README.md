@@ -15,7 +15,7 @@ Automatically sync your Google Meet attendance history to Clockify as time entri
 
 - **Google Workspace Business Plus or higher** (Google Meet API is not available on free accounts)
 - Node.js 18 or higher
-- pnpm (or npm/yarn)
+- npm (or npm/yarn)
 - Clockify account
 - Google Cloud Console project with Meet API enabled
 
@@ -45,7 +45,7 @@ Automatically sync your Google Meet attendance history to Clockify as time entri
 ### 3. Install Dependencies
 
 ```bash
-pnpm install
+npm install
 ```
 
 ### 4. Configure Environment
@@ -72,7 +72,7 @@ On first run, you'll need to authenticate:
 
 1. Run the sync:
    ```bash
-   pnpm start
+   npm start
    ```
 
 2. The app will display an authorization URL
@@ -90,7 +90,7 @@ The credentials will be saved to `token.json` for future use.
 Sync meetings from the last 30 days (default):
 
 ```bash
-pnpm start
+npm start
 ```
 
 ### Custom Date Range
@@ -166,16 +166,16 @@ Increase `CLOCKIFY_API_DELAY` in `.env` or reduce `SYNC_DAYS`.
 
 ```bash
 # Watch mode
-pnpm dev
+npm dev
 
 # Type checking
-pnpm typecheck
+npm typecheck
 
 # Linting
-pnpm lint
+npm lint
 
 # Formatting
-pnpm format
+npm format
 ```
 
 ## Project Structure

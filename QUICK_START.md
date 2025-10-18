@@ -7,7 +7,7 @@ Get up and running in 5 minutes!
 - ✅ Google Workspace Business Plus or higher
 - ✅ Clockify account
 - ✅ Node.js 18+ installed
-- ✅ pnpm installed
+- ✅ npm installed
 
 ## 1. Get Google OAuth Credentials (3 minutes)
 
@@ -57,8 +57,8 @@ MEET_PROJECT_NAME=Google Meet
 ## 4. Install & Authenticate (1 minute)
 
 ```bash
-pnpm install
-pnpm start
+npm install
+npm start
 ```
 
 **Follow the authentication prompts:**
@@ -77,7 +77,7 @@ Credentials will be saved to `token.json` for future use.
 ## 5. Run Sync
 
 ```bash
-pnpm start
+npm start
 ```
 
 That's it! Your Google Meet attendance will sync to Clockify.
@@ -174,9 +174,9 @@ CLOCKIFY_API_DELAY=100
 ## Development Commands
 
 ```bash
-pnpm start       # Run sync
-pnpm dev         # Watch mode
-pnpm typecheck   # Type checking
-pnpm check       # Lint code
-pnpm check:fix   # Auto-fix issues
+npm start       # Run sync
+npm dev         # Watch mode
+npm typecheck   # Type checking
+npm check       # Lint code
+npm check:fix   # Auto-fix issues
 ```

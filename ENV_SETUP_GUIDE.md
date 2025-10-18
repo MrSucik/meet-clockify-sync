@@ -180,8 +180,8 @@ Run the environment validation:
 
 ```bash
 cd /Users/xxx/p/meet-clockify-sync
-pnpm install
-pnpm typecheck
+npm install
+npm typecheck
 ```
 
 If everything is configured correctly, you should see:
@@ -313,14 +313,14 @@ After configuring your `.env` file:
 
 1. **Run the first sync** (requires OAuth authentication):
    ```bash
-   pnpm start
+   npm start
    ```
 
 2. **Follow the authentication prompts** in the terminal
 
 3. **Future runs** will use saved credentials:
    ```bash
-   pnpm start
+   npm start
    ```
 
 See `README.md` for full usage instructions and `SETUP.md` for detailed setup steps.

@@ -5,7 +5,11 @@
   "main": "index.js",
   "scripts": {
     "start": "tsx src/scripts/index.ts",
+    "server": "tsx src/server.ts",
+    "server:watch": "tsx watch src/server.ts",
     "dev": "tsx watch src/scripts/index.ts",
+    "investigate": "tsx src/scripts/investigate-clockify.ts",
+    "cleanup": "tsx src/scripts/cleanup-google-meet-entries.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint src/",
@@ -27,13 +31,14 @@
   ],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@9.4.0+sha1.9217c800d4ab947a7aee520242a7b70d64fc7638",
   "dependencies": {
+    "@hono/node-server": "^1.19.5",
     "@types/node": "^24.8.1",
     "cli-progress": "^3.12.0",
     "dotenv": "^17.2.3",
     "google-auth-library": "^10.4.1",
     "googleapis": "^164.0.0",
+    "hono": "^4.10.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {

@@ -4,7 +4,7 @@
 
 - Google Workspace Business Plus or higher (required for Meet API)
 - Clockify account
-- Node.js 18+ and pnpm installed
+- Node.js 18+ and npm installed
 
 ## Setup Steps
 
@@ -33,7 +33,7 @@
 
 ```bash
 cd /Users/xxx/p/meet-clockify-sync
-pnpm install
+npm install
 cp .env.example .env
 ```
 
@@ -50,7 +50,7 @@ CLOCKIFY_API_TOKEN=your_clockify_token
 ### 4. First Run (Authentication)
 
 ```bash
-pnpm start
+npm start
 ```
 
 The app will display an authorization URL. Follow these steps:
@@ -69,7 +69,7 @@ The app will save your credentials to `token.json` for future use.
 After initial authentication, just run:
 
 ```bash
-pnpm start
+npm start
 ```
 
 ## Configuration Options
@@ -113,14 +113,14 @@ Each entry in Clockify will look like:
 
 ```bash
 # Watch mode
-pnpm dev
+npm dev
 
 # Type checking
-pnpm typecheck
+npm typecheck
 
 # Linting
-pnpm lint
+npm lint
 
 # Formatting
-pnpm format
+npm format
 ```

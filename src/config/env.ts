@@ -20,8 +20,8 @@ const envSchema = z.object({
   SYNC_DAYS: z
     .string()
     .transform((val) => parseInt(val, 10))
-    .refine((val) => !Number.isNaN(val) && val >= 1 && val <= 365, {
-      message: 'SYNC_DAYS must be a number between 1 and 365',
+    .refine((val) => !Number.isNaN(val) && val >= 1 && val <= 1825, {
+      message: 'SYNC_DAYS must be a number between 1 and 1825 (5 years)',
     }),
 
   // API Configuration
@@ -37,6 +37,13 @@ const envSchema = z.object({
 
   // Project Configuration
   MEET_PROJECT_NAME: z.string().min(1, 'MEET_PROJECT_NAME is required'),
+
+  // Dry Run Configuration
+  DRY_RUN: z
+    .string()
+    .optional()
+    .default('false')
+    .transform((val) => val === 'true' || val === '1'),
 });
 
 // Inferred type

@@ -25,7 +25,7 @@ export function createGoogleMeetService() {
   };
 
   /**
-   * Initialize OAuth2 client
+   * Initialize OAuth2 client with automatic token refresh
    */
   const initializeAuth = async (): Promise<OAuth2Client> => {
     const oauth2Client = new google.auth.OAuth2(
@@ -39,6 +39,24 @@ export function createGoogleMeetService() {
       const tokenData = await fs.readFile(state.tokenPath, 'utf-8');
       const token = JSON.parse(tokenData);
       oauth2Client.setCredentials(token);
+
+      // Set up automatic token refresh
+      oauth2Client.on('tokens', async (tokens) => {
+        if (tokens.refresh_token) {
+          // Save the new refresh token if we got one
+          const currentTokens = JSON.parse(await fs.readFile(state.tokenPath, 'utf-8'));
+          currentTokens.refresh_token = tokens.refresh_token;
+          await fs.writeFile(state.tokenPath, JSON.stringify(currentTokens, null, 2));
+        }
+        if (tokens.access_token) {
+          // Save the new access token
+          const currentTokens = JSON.parse(await fs.readFile(state.tokenPath, 'utf-8'));
+          currentTokens.access_token = tokens.access_token;
+          currentTokens.expiry_date = tokens.expiry_date;
+          await fs.writeFile(state.tokenPath, JSON.stringify(currentTokens, null, 2));
+        }
+      });
+
       state.auth = oauth2Client;
       return oauth2Client;
     } catch (_error) {
@@ -110,34 +128,39 @@ export function createGoogleMeetService() {
           for (const record of response.data.conferenceRecords) {
             if (!record.name || !record.startTime) continue;
 
-            // Get participant sessions for this conference
-            const sessions = await getParticipantSessionsForConference(record.name);
+            // Get participant sessions for this conference (filtered for current user)
+            const userSessions = await getUserParticipantSessions(record.name);
 
-            // Filter for the user's sessions
-            const userSessions = sessions.filter((_session) => {
-              // We'll need to match based on the user's email or participant ID
-              // This is simplified - you may need to adjust based on actual API response
-              return true; // For now, include all sessions
-            });
+            // Aggregate all user sessions for this meeting into a single entry
+            if (userSessions.length > 0) {
+              // Find earliest start and latest end time across all sessions (rejoins)
+              const sessionTimes = userSessions
+                .filter((s) => s.startTime && s.endTime)
+                .map((s) => ({
+                  start: new Date(s.startTime),
+                  end: new Date(s.endTime as string),
+                }));
 
-            // Process each user session
-            for (const session of userSessions) {
-              if (!session.startTime || !session.endTime) continue;
+              if (sessionTimes.length > 0) {
+                const earliestStart = new Date(
+                  Math.min(...sessionTimes.map((t) => t.start.getTime())),
+                );
+                const latestEnd = new Date(Math.max(...sessionTimes.map((t) => t.end.getTime())));
+                const totalDuration = Math.floor(
+                  (latestEnd.getTime() - earliestStart.getTime()) / 1000,
+                );
 
-              const sessionStart = new Date(session.startTime);
-              const sessionEnd = new Date(session.endTime);
-              const duration = Math.floor((sessionEnd.getTime() - sessionStart.getTime()) / 1000);
-
-              // biome-ignore lint/suspicious/noExplicitAny: Google API types are incomplete
-              const space = record.space as any;
-              meetings.push({
-                meetingId: record.name,
-                meetingCode: space?.meetingCode || '',
-                meetingUri: space?.meetingUri || '',
-                startTime: sessionStart,
-                endTime: sessionEnd,
-                duration,
-              });
+                // biome-ignore lint/suspicious/noExplicitAny: Google API types are incomplete
+                const space = record.space as any;
+                meetings.push({
+                  meetingId: record.name,
+                  meetingCode: space?.meetingCode || '',
+                  meetingUri: space?.meetingUri || '',
+                  startTime: earliestStart,
+                  endTime: latestEnd,
+                  duration: totalDuration,
+                });
+              }
             }
           }
         }
@@ -159,9 +182,9 @@ export function createGoogleMeetService() {
   };
 
   /**
-   * Get participant sessions for a specific conference
+   * Get participant sessions for the current user only
    */
-  const getParticipantSessionsForConference = async (
+  const getUserParticipantSessions = async (
     conferenceName: string,
   ): Promise<ParticipantSession[]> => {
     if (!state.auth) {
@@ -169,10 +192,10 @@ export function createGoogleMeetService() {
     }
 
     const meet = google.meet({ version: 'v2', auth: state.auth as OAuth2Client });
-    const sessions: ParticipantSession[] = [];
+    const userSessions: ParticipantSession[] = [];
 
     try {
-      // First get participants
+      // Get all participants
       const participantsResponse = await meet.conferenceRecords.participants.list({
         parent: conferenceName,
         pageSize: 100,
@@ -181,6 +204,21 @@ export function createGoogleMeetService() {
       if (participantsResponse.data.participants) {
         for (const participant of participantsResponse.data.participants) {
           if (!participant.name) continue;
+
+          // biome-ignore lint/suspicious/noExplicitAny: Google API types are incomplete
+          const signedinUser = (participant as any).signedinUser;
+
+          // Check if this participant matches the current user
+          // Match by display name containing the email username (before @)
+          const emailUsername = state.env.GOOGLE_USER_EMAIL.split('@')[0].toLowerCase();
+          const displayName = (signedinUser?.displayName || '').toLowerCase();
+
+          const isCurrentUser =
+            signedinUser?.user?.includes(state.env.GOOGLE_USER_EMAIL) ||
+            displayName.includes(emailUsername) ||
+            displayName.includes(state.env.GOOGLE_USER_EMAIL.toLowerCase());
+
+          if (!isCurrentUser) continue;
 
           // Get sessions for this participant
           const sessionsResponse =
@@ -192,7 +230,7 @@ export function createGoogleMeetService() {
           if (sessionsResponse.data.participantSessions) {
             for (const session of sessionsResponse.data.participantSessions) {
               if (session.name && session.startTime) {
-                sessions.push({
+                userSessions.push({
                   name: session.name,
                   startTime: session.startTime,
                   endTime: session.endTime || null,
@@ -206,11 +244,11 @@ export function createGoogleMeetService() {
       }
       // biome-ignore lint/suspicious/noExplicitAny: Error handling requires any
     } catch (error: any) {
-      console.error('Error fetching participant sessions:', error.message);
+      console.error('Error fetching user participant sessions:', error.message);
       throw error;
     }
 
-    return sessions;
+    return userSessions;
   };
 
   /**

@@ -1,3 +1,4 @@
+import * as readline from 'node:readline';
 import * as cliProgress from 'cli-progress';
 import { validateEnvironment } from '../config/env';
 import { createClockifyService } from '../services/clockify-service';
@@ -6,6 +7,56 @@ import { formatDuration, getErrorMessage, isApiError, sleep } from '../utils/com
 
 // Validate environment on startup
 const env = validateEnvironment();
+
+/**
+ * Prompt user for input
+ */
+function promptUser(question: string): Promise<string> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+/**
+ * Handle Google OAuth authentication flow
+ */
+async function handleAuthentication(
+  meetService: ReturnType<typeof createGoogleMeetService>,
+): Promise<void> {
+  console.log('🔐 First-time authentication required\n');
+  console.log('Please follow these steps to authenticate:\n');
+
+  const authUrl = meetService.getAuthUrl();
+  console.log('1. Visit this URL to authenticate:');
+  console.log(`   ${authUrl}\n`);
+  console.log('2. Sign in with your Google Workspace account');
+  console.log('3. Grant the requested permissions');
+  console.log('4. You will be redirected to: http://localhost:3000/oauth2callback?code=...');
+  console.log('   (The page will show an error - that is expected)\n');
+  console.log('5. Copy the ENTIRE URL from your browser address bar\n');
+
+  const redirectUrl = await promptUser('Paste the redirect URL here: ');
+
+  // Extract the code from the URL
+  const urlMatch = redirectUrl.match(/code=([^&]+)/);
+  if (!urlMatch) {
+    throw new Error('Invalid redirect URL. Could not find authorization code.');
+  }
+
+  const code = urlMatch[1];
+  console.log('\n🔑 Saving credentials...');
+
+  await meetService.saveCredentialsFromCode(code);
+  console.log('✅ Authentication successful! Credentials saved to token.json\n');
+}
 
 /**
  * Sync Google Meet sessions to Clockify
@@ -53,6 +104,11 @@ async function syncMeetToClockify(
     console.log(`📊 Found ${existingEntries.length} existing time entries in Clockify`);
     console.log(`   - ${existingMeetEntries.length} are Google Meet entries\n`);
 
+    // Check dry run mode
+    if (env.DRY_RUN) {
+      console.log('🔍 DRY RUN MODE - No entries will be created\n');
+    }
+
     // Sync each meeting session
     let syncedCount = 0;
     let skippedCount = 0;
@@ -76,7 +132,8 @@ async function syncMeetToClockify(
       progressBar.update(i + 1);
 
       // Check if already synced (using meeting ID as unique identifier)
-      const meetingIdentifier = `[Meet:${meeting.meetingId}:${meeting.startTime.toISOString()}]`;
+      // Note: We only use meetingId now since we aggregate all sessions per conference
+      const meetingIdentifier = `[Meet:${meeting.meetingId}]`;
       const alreadySynced = existingEntries.some((entry) =>
         entry.description.includes(meetingIdentifier),
       );
@@ -89,22 +146,29 @@ async function syncMeetToClockify(
       // Format meeting duration
       const duration = formatDuration(meeting.duration);
 
-      // Create description
-      const meetingCodeDisplay = meeting.meetingCode ? `Code: ${meeting.meetingCode}` : 'Meeting';
-      const description = `🎥 ${meetingCodeDisplay} | ${duration.hours}h ${duration.minutes}m ${meetingIdentifier}`;
+      // Create description with meeting code or fallback to meeting time
+      const meetingDisplay = meeting.meetingCode
+        ? `Meet: ${meeting.meetingCode}`
+        : `Google Meet (${meeting.startTime.toLocaleTimeString()})`;
+      const description = `🎥 ${meetingDisplay} | ${duration.hours}h ${duration.minutes}m ${meetingIdentifier}`;
 
       try {
-        await clockifyService.createTimeEntry({
-          start: meeting.startTime.toISOString(),
-          end: meeting.endTime.toISOString(),
-          billable: false,
-          description: description,
-        });
+        if (env.DRY_RUN) {
+          // In dry run mode, just log what would be created
+          syncedCount++;
+        } else {
+          await clockifyService.createTimeEntry({
+            start: meeting.startTime.toISOString(),
+            end: meeting.endTime.toISOString(),
+            billable: false,
+            description: description,
+          });
 
-        syncedCount++;
+          syncedCount++;
 
-        // Add delay to avoid rate limiting
-        await sleep(env.CLOCKIFY_API_DELAY);
+          // Add delay to avoid rate limiting
+          await sleep(env.CLOCKIFY_API_DELAY);
+        }
       } catch (error: unknown) {
         const errorMessage = getErrorMessage(error);
         failedCount++;
@@ -119,14 +183,24 @@ async function syncMeetToClockify(
     // Stop progress bar
     progressBar.stop();
 
-    console.log(`\n🎉 Sync complete!`);
-    console.log(`   - Google Meet sessions found: ${meetings.length}`);
-    console.log(`   - Newly synced: ${syncedCount}`);
-    console.log(`   - Already existed: ${skippedCount}`);
-    console.log(`   - Failed: ${failedCount}`);
-    console.log(
-      `   - Total in Clockify now: ${existingMeetEntries.length + syncedCount} meeting entries`,
-    );
+    if (env.DRY_RUN) {
+      console.log(`\n🔍 DRY RUN Complete - No changes were made!`);
+      console.log(`   - Google Meet sessions found: ${meetings.length}`);
+      console.log(`   - Would be created: ${syncedCount}`);
+      console.log(`   - Already exist: ${skippedCount}`);
+      console.log(`   - Would fail: ${failedCount}`);
+      console.log(`   - Current total in Clockify: ${existingMeetEntries.length} meeting entries`);
+      console.log(`\n💡 Set DRY_RUN=false in .env to actually create entries`);
+    } else {
+      console.log(`\n🎉 Sync complete!`);
+      console.log(`   - Google Meet sessions found: ${meetings.length}`);
+      console.log(`   - Newly synced: ${syncedCount}`);
+      console.log(`   - Already existed: ${skippedCount}`);
+      console.log(`   - Failed: ${failedCount}`);
+      console.log(
+        `   - Total in Clockify now: ${existingMeetEntries.length + syncedCount} meeting entries`,
+      );
+    }
   } catch (error: unknown) {
     console.error('\n❌ Sync failed:');
 
@@ -153,7 +227,27 @@ async function main() {
   const meetService = createGoogleMeetService();
   const clockifyService = createClockifyService(env.CLOCKIFY_API_TOKEN);
 
-  await syncMeetToClockify(meetService, clockifyService);
+  try {
+    await syncMeetToClockify(meetService, clockifyService);
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error);
+
+    // Check if this is an authentication error
+    if (errorMessage.includes('No saved credentials found')) {
+      try {
+        await handleAuthentication(meetService);
+        // Retry the sync after authentication
+        await syncMeetToClockify(meetService, clockifyService);
+      } catch (authError: unknown) {
+        console.error('\n❌ Authentication failed:');
+        console.error('Error:', getErrorMessage(authError));
+        throw authError;
+      }
+    } else {
+      // Re-throw other errors
+      throw error;
+    }
+  }
 }
 
 // Run the main function

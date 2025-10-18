@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+.env
+.env.example
+token.json
+*.md
+.git
+.gitignore
+*.log
+dist
+coverage
+.DS_Store

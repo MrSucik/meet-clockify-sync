@@ -1,0 +1,45 @@
+{
+  "name": "meet-clockify-sync",
+  "version": "1.0.0",
+  "description": "Google Meet to Clockify Sync - Automatically sync your Google Meet attendance history to Clockify as time entries",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsx src/scripts/index.ts",
+    "dev": "tsx watch src/scripts/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint src/",
+    "lint:fix": "biome lint --write src/",
+    "format": "biome format src/",
+    "format:fix": "biome format --write src/",
+    "check": "biome check src/",
+    "check:fix": "biome check --write src/",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "google-meet",
+    "google-workspace",
+    "clockify",
+    "sync",
+    "time-tracking",
+    "productivity",
+    "api"
+  ],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@9.4.0+sha1.9217c800d4ab947a7aee520242a7b70d64fc7638",
+  "dependencies": {
+    "@types/node": "^24.8.1",
+    "cli-progress": "^3.12.0",
+    "dotenv": "^17.2.3",
+    "google-auth-library": "^10.4.1",
+    "googleapis": "^164.0.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.6",
+    "@types/cli-progress": "^3.11.6",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

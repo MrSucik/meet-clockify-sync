@@ -54,20 +54,35 @@ MEET_PROJECT_NAME=Google Meet
 DRY_RUN=false
 ```
 
-### 4. Add token.json as Secret
+### 4. Add token.json as Persistent Volume
 
-Since you need the OAuth refresh token, you have two options:
+⚠️ **IMPORTANT:** The OAuth token must be available in production but is NOT committed to git.
 
-#### Option A: Mount as Volume (Recommended)
-1. First, authenticate locally to generate `token.json`
-2. In Coolify, go to **Storage** → **Add Volume**
-3. Upload your `token.json` file
-4. Mount it to `/app/token.json` in the container
+**📖 See [TOKEN_SETUP.md](./TOKEN_SETUP.md) for complete token setup instructions.**
 
-#### Option B: Embed in Docker Image
-1. Build image locally with token.json
-2. Push to registry
-3. Use that image in Coolify
+**Quick steps:**
+
+1. **Generate token locally first:**
+   ```bash
+   npm start
+   # Follow OAuth prompts in browser
+   ```
+
+2. **In Coolify → Storage → Add Volume:**
+   - **Type:** File
+   - **Source:** Upload or create `token.json` content
+   - **Destination:** `/app/token.json`
+   - **Read Only:** ❌ No (must be writable for token refresh)
+
+3. **Alternative - Via Coolify host:**
+   ```bash
+   # SSH to Coolify server
+   mkdir -p /data/meet-clockify-sync
+   # Copy your token.json here
+   # Then mount /data/meet-clockify-sync/token.json to /app/token.json
+   ```
+
+The token will automatically refresh and persist across restarts!
 
 ### 5. Configure Dockerfile Deployment
 

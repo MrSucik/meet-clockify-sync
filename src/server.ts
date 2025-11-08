@@ -2,6 +2,7 @@ import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { HonoAdapter } from '@bull-board/hono';
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import { cors } from 'hono/cors';
@@ -22,7 +23,7 @@ app.use('*', cors());
 const env = validateEnvironment();
 
 // Setup Bull Board for queue monitoring
-const serverAdapter = new HonoAdapter((() => {}) as never);
+const serverAdapter = new HonoAdapter(serveStatic);
 serverAdapter.setBasePath('/admin/queues');
 
 const syncQueue = getSyncQueue();

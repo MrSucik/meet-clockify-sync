@@ -36,10 +36,10 @@ createBullBoard({
 const bullBoardApp = serverAdapter.registerPlugin();
 app.route('/admin/queues', bullBoardApp);
 
-// Apply basic auth to all other endpoints
+// Apply basic auth to all endpoints except health check
 app.use('*', async (c, next) => {
-  // Skip auth for admin UI
-  if (c.req.path.startsWith('/admin/queues')) {
+  // Skip auth only for health check
+  if (c.req.path === '/health') {
     return next();
   }
 

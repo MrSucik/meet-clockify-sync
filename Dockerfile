@@ -36,12 +36,12 @@ RUN npm ci --no-audit --no-fund && \
 
 # Copy source code and migrations
 COPY --from=builder /app/src ./src
+COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
-# Create drizzle migrations directory
-RUN mkdir -p drizzle && \
-    mkdir -p logs && \
+# Create logs directory
+RUN mkdir -p logs && \
     chown -R nodejs:nodejs /app
 
 # Switch to non-root user

@@ -42,7 +42,7 @@ app.route('/admin/queues', bullBoardApp);
 // Apply basic auth to all endpoints except health check and OAuth flow
 app.use('*', async (c, next) => {
   // Skip auth for health check and OAuth endpoints
-  if (c.req.path === '/health' || c.req.path === '/auth' || c.req.path === '/callback') {
+  if (c.req.path === '/health' || c.req.path === '/auth' || c.req.path === '/oauth2callback') {
     return next();
   }
 
@@ -188,7 +188,7 @@ app.get('/', async (c) => {
       health: '/health',
       sync: '/sync',
       auth: '/auth',
-      'oauth-callback': '/callback',
+      'oauth-callback': '/oauth2callback',
     },
   });
 });
@@ -259,7 +259,7 @@ app.get('/auth', async (c) => {
 });
 
 // OAuth callback endpoint
-app.get('/callback', async (c) => {
+app.get('/oauth2callback', async (c) => {
   try {
     const code = c.req.query('code');
 

@@ -11,6 +11,8 @@ import { validateEnvironment } from './config/env';
 import { closeRedisConnection } from './config/redis';
 import { closeDb } from './db';
 import { closeSyncQueue, getSyncQueue } from './queues/sync-queue';
+import { createGoogleMeetService } from './services/google-meet-service';
+import { loadTokens } from './utils/token-storage';
 import { closeSyncWorker, createSyncWorker } from './workers/sync-worker';
 
 const app = new Hono();
@@ -37,10 +39,10 @@ createBullBoard({
 const bullBoardApp = serverAdapter.registerPlugin();
 app.route('/admin/queues', bullBoardApp);
 
-// Apply basic auth to all endpoints except health check
+// Apply basic auth to all endpoints except health check and OAuth flow
 app.use('*', async (c, next) => {
-  // Skip auth only for health check
-  if (c.req.path === '/health') {
+  // Skip auth for health check and OAuth endpoints
+  if (c.req.path === '/health' || c.req.path === '/auth' || c.req.path === '/callback') {
     return next();
   }
 
@@ -54,66 +56,139 @@ app.use('*', async (c, next) => {
 
 // Root endpoint with content negotiation
 app.get('/', async (c) => {
+  // Check token status
+  const hasGoogleToken = (await loadTokens()) !== null;
+  const hasClockifyToken = !!env.CLOCKIFY_API_TOKEN;
+
   const acceptHeader = c.req.header('accept') || '';
   const wantsHtml = acceptHeader.includes('text/html');
 
   if (wantsHtml) {
     return c.html(`
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Google Meet to Clockify Sync</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            max-width: 800px;
-            margin: 50px auto;
-            padding: 20px;
-            line-height: 1.6;
-        }
-        h1 { color: #333; }
-        .status { color: #28a745; font-weight: bold; }
-        .endpoint {
-            background: #f4f4f4;
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 5px;
-            font-family: monospace;
-        }
-        a { color: #007bff; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-    </style>
+  <meta charset="UTF-8">
+  <title>Google Meet Clockify Sync</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 40px 20px;
+      text-align: center;
+      background: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 30px;
+    }
+    h2 {
+      color: #555;
+      margin-bottom: 15px;
+    }
+    .status-item {
+      background: white;
+      border: 1px solid #e1e5e9;
+      border-radius: 8px;
+      padding: 15px;
+      margin: 10px 0;
+      text-align: left;
+    }
+    .configured {
+      color: #28a745;
+    }
+    .needs-auth {
+      color: #dc3545;
+    }
+    .sync-form {
+      margin: 20px 0;
+    }
+    .btn {
+      background: #007bff;
+      color: white;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      text-decoration: none;
+    }
+    .btn:hover {
+      background: #0056b3;
+    }
+    .btn:disabled {
+      background: #6c757d;
+      cursor: not-allowed;
+    }
+    .auth-link {
+      display: inline-block;
+      margin-top: 10px;
+    }
+  </style>
 </head>
 <body>
-    <h1>🎥 Google Meet to Clockify Sync</h1>
-    <p>Status: <span class="status">Running</span></p>
-    <p>Version: 1.0.0</p>
+  <h1>🎥 Google Meet Clockify Sync</h1>
 
-    <h2>Endpoints</h2>
-    <div class="endpoint">GET /health - Health check</div>
-    <div class="endpoint">POST /sync - Trigger manual sync</div>
-    <div class="endpoint">GET /admin/queues - Bull Board dashboard</div>
+  <h2>📊 Status</h2>
+  <div class="status-item">
+    <strong>Google Meet API:</strong>
+    <span class="${hasGoogleToken ? 'configured' : 'needs-auth'}">
+      ${hasGoogleToken ? '✅ Configured' : '❌ Needs Authentication'}
+    </span>
+  </div>
+  <div class="status-item">
+    <strong>Clockify API:</strong>
+    <span class="${hasClockifyToken ? 'configured' : 'needs-auth'}">
+      ${hasClockifyToken ? '✅ Configured' : '❌ Needs Token'}
+    </span>
+  </div>
 
-    <h2>Quick Links</h2>
-    <ul>
-        <li><a href="/admin/queues">Queue Dashboard</a></li>
-        <li><a href="/health">Health Check</a></li>
-    </ul>
+  <h2>🔄 Sync Actions</h2>
+  <div class="sync-form">
+    <form action="/sync" method="post">
+      <button type="submit" class="btn" ${!hasGoogleToken || !hasClockifyToken ? 'disabled' : ''}>
+        Start Manual Sync
+      </button>
+    </form>
+  </div>
+
+  <div class="auth-link">
+    <a href="/auth" class="btn">🔐 Authenticate with Google</a>
+  </div>
+
+  <div class="auth-link" style="margin-left: 10px;">
+    <a href="/admin/queues" class="btn" style="background: #6c757d;">📊 Job Queue Dashboard</a>
+  </div>
 </body>
 </html>
-		`);
+    `);
   }
 
   return c.json({
-    status: 'ok',
-    service: 'meet-clockify-sync',
+    name: 'Google Meet Clockify Sync',
+    status: 'healthy',
     version: '1.0.0',
+    authentication: {
+      google: {
+        configured: hasGoogleToken,
+        status: hasGoogleToken ? 'configured' : 'needs_authentication',
+      },
+      clockify: {
+        configured: hasClockifyToken,
+        status: hasClockifyToken ? 'configured' : 'needs_token',
+      },
+    },
+    environment: {
+      node_env: env.NODE_ENV,
+      server_port: env.SERVER_PORT,
+      sync_days: env.SYNC_DAYS,
+    },
     endpoints: {
       health: '/health',
       sync: '/sync',
-      admin: '/admin/queues',
+      auth: '/auth',
+      'oauth-callback': '/callback',
     },
   });
 });
@@ -126,6 +201,19 @@ app.get('/health', (c) => {
 // Manual sync trigger endpoint
 app.post('/sync', async (c) => {
   try {
+    const hasGoogleToken = (await loadTokens()) !== null;
+
+    if (!hasGoogleToken) {
+      return c.json(
+        {
+          error: 'Google access token not configured',
+          message: 'Please authenticate with Google first',
+          authUrl: '/auth',
+        },
+        401,
+      );
+    }
+
     const job = await syncQueue.add('sync', {
       triggeredBy: 'manual',
       timestamp: new Date().toISOString(),
@@ -144,6 +232,64 @@ app.post('/sync', async (c) => {
         status: 'error',
         message: error instanceof Error ? error.message : 'Unknown error',
       },
+      500,
+    );
+  }
+});
+
+// Google OAuth authentication endpoint
+app.get('/auth', async (c) => {
+  try {
+    const googleMeetService = createGoogleMeetService();
+    const authUrl = googleMeetService.getAuthUrl();
+
+    // Redirect to Google OAuth URL
+    return c.redirect(authUrl);
+  } catch (error: unknown) {
+    console.error('Auth endpoint error:', error);
+    return c.html(
+      `
+      <h1>Authentication Failed</h1>
+      <p>Failed to generate authentication URL: ${error instanceof Error ? error.message : 'Unknown error'}</p>
+      <a href="/">Back to home</a>
+    `,
+      500,
+    );
+  }
+});
+
+// OAuth callback endpoint
+app.get('/callback', async (c) => {
+  try {
+    const code = c.req.query('code');
+
+    if (!code) {
+      return c.html(
+        `
+        <h1>Authentication Failed</h1>
+        <p>No authorization code received</p>
+        <a href="/">Back to home</a>
+      `,
+        400,
+      );
+    }
+
+    const googleMeetService = createGoogleMeetService();
+    await googleMeetService.saveCredentialsFromCode(code);
+
+    return c.html(`
+      <h1>Authentication Successful</h1>
+      <p>Google Meet access token has been saved successfully</p>
+      <a href="/">Back to home</a>
+    `);
+  } catch (error: unknown) {
+    console.error('OAuth callback error:', error);
+    return c.html(
+      `
+      <h1>Authentication Failed</h1>
+      <p>Failed to save credentials: ${error instanceof Error ? error.message : 'Unknown error'}</p>
+      <a href="/">Back to home</a>
+    `,
       500,
     );
   }

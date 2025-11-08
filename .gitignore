@@ -6,3 +6,10 @@ dist/
 .DS_Store
 credentials.json
 token.json
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+logs/

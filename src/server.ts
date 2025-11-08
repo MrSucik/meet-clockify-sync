@@ -1,170 +1,241 @@
+import { createBullBoard } from '@bull-board/api';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { HonoAdapter } from '@bull-board/hono';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { basicAuth } from 'hono/basic-auth';
+import { cors } from 'hono/cors';
+import { logger } from 'hono/logger';
 import { validateEnvironment } from './config/env';
-import { createClockifyService } from './services/clockify-service';
-import { createGoogleMeetService } from './services/google-meet-service';
-import { formatDuration, getErrorMessage, sleep } from './utils/common';
+import { closeRedisConnection } from './config/redis';
+import { closeDb } from './db';
+import { closeSyncQueue, getSyncQueue } from './queues/sync-queue';
+import { closeSyncWorker, createSyncWorker } from './workers/sync-worker';
 
 const app = new Hono();
 
-// Health check endpoint
-app.get('/', (c) => {
+// Apply middleware
+app.use('*', logger());
+app.use('*', cors());
+
+// Initialize environment
+const env = validateEnvironment();
+
+// Setup Bull Board for queue monitoring
+const serverAdapter = new HonoAdapter((() => {}) as never);
+serverAdapter.setBasePath('/admin/queues');
+
+const syncQueue = getSyncQueue();
+
+createBullBoard({
+  queues: [new BullMQAdapter(syncQueue)],
+  serverAdapter,
+});
+
+// Mount Bull Board routes (no auth for admin UI)
+const bullBoardApp = serverAdapter.registerPlugin();
+app.route('/admin/queues', bullBoardApp);
+
+// Apply basic auth to all other endpoints
+app.use('*', async (c, next) => {
+  // Skip auth for admin UI
+  if (c.req.path.startsWith('/admin/queues')) {
+    return next();
+  }
+
+  const auth = basicAuth({
+    username: env.BASIC_AUTH_USERNAME,
+    password: env.BASIC_AUTH_PASSWORD,
+  });
+
+  return auth(c, next);
+});
+
+// Root endpoint with content negotiation
+app.get('/', async (c) => {
+  const acceptHeader = c.req.header('accept') || '';
+  const wantsHtml = acceptHeader.includes('text/html');
+
+  if (wantsHtml) {
+    return c.html(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Meet to Clockify Sync</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 { color: #333; }
+        .status { color: #28a745; font-weight: bold; }
+        .endpoint {
+            background: #f4f4f4;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <h1>🎥 Google Meet to Clockify Sync</h1>
+    <p>Status: <span class="status">Running</span></p>
+    <p>Version: 1.0.0</p>
+
+    <h2>Endpoints</h2>
+    <div class="endpoint">GET /health - Health check</div>
+    <div class="endpoint">POST /sync - Trigger manual sync</div>
+    <div class="endpoint">GET /admin/queues - Bull Board dashboard</div>
+
+    <h2>Quick Links</h2>
+    <ul>
+        <li><a href="/admin/queues">Queue Dashboard</a></li>
+        <li><a href="/health">Health Check</a></li>
+    </ul>
+</body>
+</html>
+		`);
+  }
+
   return c.json({
     status: 'ok',
     service: 'meet-clockify-sync',
     version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      sync: '/sync',
+      admin: '/admin/queues',
+    },
   });
 });
 
 // Health endpoint
 app.get('/health', (c) => {
-  return c.json({ status: 'healthy' });
+  return c.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Sync endpoint for cron
+// Manual sync trigger endpoint
 app.post('/sync', async (c) => {
   try {
-    const env = validateEnvironment();
+    const job = await syncQueue.add('sync', {
+      triggeredBy: 'manual',
+      timestamp: new Date().toISOString(),
+    });
 
-    console.log('🎥 Starting sync via HTTP endpoint...');
-
-    const meetService = createGoogleMeetService();
-    const clockifyService = createClockifyService(env.CLOCKIFY_API_TOKEN);
-
-    // Initialize services
-    await meetService.initialize();
-    await clockifyService.initialize();
-
-    // Calculate date range
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - env.SYNC_DAYS);
-
-    console.log(
-      `📅 Fetching meetings from last ${env.SYNC_DAYS} days (${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]})...`,
-    );
-
-    // Get meetings from Google Meet API
-    const meetings = await meetService.getConferenceRecords(startDate, endDate);
-
-    console.log(`✅ Found ${meetings.length} meeting sessions in Google Meet history`);
-
-    if (meetings.length === 0) {
-      return c.json({
-        status: 'success',
-        message: 'No meetings found',
-        stats: {
-          meetings_found: 0,
-          synced: 0,
-          skipped: 0,
-          failed: 0,
-        },
-      });
-    }
-
-    // Get existing Clockify entries
-    const existingEntries = await clockifyService.getTimeEntriesForDateRange(
-      startDate.toISOString().split('T')[0],
-      endDate.toISOString().split('T')[0],
-    );
-
-    const existingMeetEntries = existingEntries.filter((entry) =>
-      entry.description.includes('[Meet:'),
-    );
-
-    console.log(`📊 Found ${existingEntries.length} existing time entries in Clockify`);
-    console.log(`   - ${existingMeetEntries.length} are Google Meet entries`);
-
-    // Sync each meeting session
-    let syncedCount = 0;
-    let skippedCount = 0;
-    let failedCount = 0;
-
-    for (const meeting of meetings) {
-      // Check if already synced
-      const meetingIdentifier = `[Meet:${meeting.meetingId}]`;
-      const alreadySynced = existingEntries.some((entry) =>
-        entry.description.includes(meetingIdentifier),
-      );
-
-      if (alreadySynced) {
-        skippedCount++;
-        continue;
-      }
-
-      // Format meeting duration
-      const duration = formatDuration(meeting.duration);
-
-      // Create description
-      const meetingDisplay = meeting.meetingCode
-        ? `Meet: ${meeting.meetingCode}`
-        : `Google Meet (${meeting.startTime.toLocaleTimeString()})`;
-      const description = `🎥 ${meetingDisplay} | ${duration.hours}h ${duration.minutes}m ${meetingIdentifier}`;
-
-      try {
-        if (env.DRY_RUN) {
-          syncedCount++;
-        } else {
-          await clockifyService.createTimeEntry({
-            start: meeting.startTime.toISOString(),
-            end: meeting.endTime.toISOString(),
-            billable: false,
-            description: description,
-          });
-
-          syncedCount++;
-          await sleep(env.CLOCKIFY_API_DELAY);
-        }
-      } catch (error: unknown) {
-        const errorMessage = getErrorMessage(error);
-        failedCount++;
-        console.error(`Failed to sync meeting ${meeting.meetingCode}:`, errorMessage);
-
-        if (errorMessage.includes('429') || errorMessage.includes('Too Many Requests')) {
-          await sleep(200);
-        }
-      }
-    }
-
-    const result = {
+    return c.json({
       status: 'success',
-      message: 'Sync completed',
-      stats: {
-        meetings_found: meetings.length,
-        synced: syncedCount,
-        skipped: skippedCount,
-        failed: failedCount,
-        total_in_clockify: existingMeetEntries.length + syncedCount,
-      },
-      dry_run: env.DRY_RUN,
-    };
-
-    console.log('✅ Sync complete:', result);
-
-    return c.json(result);
+      message: 'Sync job added to queue',
+      jobId: job.id,
+      queueUrl: `/admin/queues/meet-clockify-sync/${job.id}`,
+    });
   } catch (error: unknown) {
-    const errorMessage = getErrorMessage(error);
-    console.error('❌ Sync failed:', errorMessage);
-
+    console.error('❌ Failed to add sync job to queue:', error);
     return c.json(
       {
         status: 'error',
-        message: errorMessage,
+        message: error instanceof Error ? error.message : 'Unknown error',
       },
       500,
     );
   }
 });
 
-const port = Number(process.env.PORT) || 3000;
+const port = env.SERVER_PORT;
 
-console.log(`🚀 Server running on http://localhost:${port}`);
-console.log(`📍 Endpoints:`);
-console.log(`   GET  /         - Service info`);
-console.log(`   GET  /health   - Health check`);
-console.log(`   POST /sync     - Trigger sync (use this for cron)`);
+/**
+ * Setup scheduled sync job with BullMQ repeatable jobs
+ */
+async function setupScheduledJob(): Promise<void> {
+  console.log('\n🔄 Setting up scheduled sync job...');
 
-serve({
-  fetch: app.fetch,
-  port,
-});
+  // Remove any existing repeatable jobs to avoid duplicates
+  const repeatableJobs = await syncQueue.getRepeatableJobs();
+  for (const job of repeatableJobs) {
+    await syncQueue.removeRepeatableByKey(job.key);
+    console.log(`   Removed old repeatable job: ${job.key}`);
+  }
+
+  // Add new repeatable job with cron schedule
+  await syncQueue.add(
+    'sync',
+    {
+      triggeredBy: 'schedule',
+      timestamp: new Date().toISOString(),
+    },
+    {
+      repeat: {
+        pattern: env.SYNC_SCHEDULE,
+      },
+    },
+  );
+
+  console.log(`✅ Scheduled sync job added with pattern: ${env.SYNC_SCHEDULE}`);
+
+  // Add immediate initial sync
+  await syncQueue.add('sync', {
+    triggeredBy: 'schedule',
+    timestamp: new Date().toISOString(),
+  });
+
+  console.log('✅ Initial sync job queued\n');
+}
+
+/**
+ * Graceful shutdown handler
+ */
+async function shutdown(): Promise<void> {
+  console.log('\n🛑 Shutting down gracefully...');
+
+  await closeSyncWorker();
+  await closeSyncQueue();
+  await closeRedisConnection();
+  await closeDb();
+
+  console.log('✅ Shutdown complete');
+  process.exit(0);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+/**
+ * Start the server and worker
+ */
+async function startServer(): Promise<void> {
+  console.log('\n🚀 Starting Google Meet to Clockify Sync Server...\n');
+
+  // Setup scheduled job
+  await setupScheduledJob();
+
+  // Start the worker
+  createSyncWorker();
+
+  // Start the HTTP server
+  serve({
+    fetch: app.fetch,
+    port,
+  });
+
+  console.log(`✅ HTTP server running on http://localhost:${port}`);
+  console.log(`📍 Endpoints:`);
+  console.log(`   GET  /                 - Service info (HTML/JSON)`);
+  console.log(`   GET  /health           - Health check`);
+  console.log(`   POST /sync             - Trigger manual sync`);
+  console.log(`   GET  /admin/queues     - Bull Board dashboard`);
+  console.log(`\n🔐 Basic Auth:`);
+  console.log(`   Username: ${env.BASIC_AUTH_USERNAME}`);
+  console.log(`   Password: ${env.BASIC_AUTH_PASSWORD}`);
+  console.log(`\n📅 Scheduled Sync:`);
+  console.log(`   Pattern: ${env.SYNC_SCHEDULE}`);
+  console.log('');
+}
+
+startServer();

@@ -1,15 +1,13 @@
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import type { OAuth2Client } from 'google-auth-library';
 import { google } from 'googleapis';
 import { getEnvironment } from '../config/env';
 import type { MeetingSession, ParticipantSession } from '../types/google-meet';
 import { sleep } from '../utils/common';
+import { loadTokens, saveTokens, type TokenData } from '../utils/token-storage';
 
 interface GoogleMeetState {
   env: ReturnType<typeof getEnvironment>;
   auth: OAuth2Client | null;
-  tokenPath: string;
 }
 
 const SCOPES = [
@@ -21,7 +19,19 @@ export function createGoogleMeetService() {
   const state: GoogleMeetState = {
     env: getEnvironment(),
     auth: null,
-    tokenPath: path.join(process.cwd(), 'token.json'),
+  };
+
+  /**
+   * Convert token data from database format to OAuth2 format
+   */
+  const convertTokenData = (tokenData: TokenData): Record<string, unknown> => {
+    return {
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      expiry_date: tokenData.expires_at,
+      token_type: tokenData.token_type,
+      scope: tokenData.scope,
+    };
   };
 
   /**
@@ -34,27 +44,31 @@ export function createGoogleMeetService() {
       state.env.GOOGLE_REDIRECT_URI,
     );
 
-    // Try to load saved credentials
+    // Try to load saved credentials from database
     try {
-      const tokenData = await fs.readFile(state.tokenPath, 'utf-8');
-      const token = JSON.parse(tokenData);
-      oauth2Client.setCredentials(token);
+      const tokenData = await loadTokens();
+
+      if (!tokenData) {
+        throw new Error(
+          'No saved credentials found. Please run the authentication flow first. ' +
+            'See README for instructions.',
+        );
+      }
+
+      oauth2Client.setCredentials(convertTokenData(tokenData));
 
       // Set up automatic token refresh
       oauth2Client.on('tokens', async (tokens) => {
-        if (tokens.refresh_token) {
-          // Save the new refresh token if we got one
-          const currentTokens = JSON.parse(await fs.readFile(state.tokenPath, 'utf-8'));
-          currentTokens.refresh_token = tokens.refresh_token;
-          await fs.writeFile(state.tokenPath, JSON.stringify(currentTokens, null, 2));
-        }
-        if (tokens.access_token) {
-          // Save the new access token
-          const currentTokens = JSON.parse(await fs.readFile(state.tokenPath, 'utf-8'));
-          currentTokens.access_token = tokens.access_token;
-          currentTokens.expiry_date = tokens.expiry_date;
-          await fs.writeFile(state.tokenPath, JSON.stringify(currentTokens, null, 2));
-        }
+        // Save updated tokens to database
+        const updatedTokenData: TokenData = {
+          access_token: tokens.access_token || tokenData.access_token,
+          refresh_token: tokens.refresh_token || tokenData.refresh_token,
+          expires_at: tokens.expiry_date || tokenData.expires_at,
+          token_type: tokens.token_type || tokenData.token_type,
+          scope: tokens.scope || tokenData.scope,
+        };
+
+        await saveTokens(updatedTokenData);
       });
 
       state.auth = oauth2Client;
@@ -96,7 +110,16 @@ export function createGoogleMeetService() {
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
 
-    await fs.writeFile(state.tokenPath, JSON.stringify(tokens));
+    // Save to database instead of file
+    const tokenData: TokenData = {
+      access_token: tokens.access_token || '',
+      refresh_token: tokens.refresh_token || '',
+      expires_at: tokens.expiry_date || Date.now() + 3600000,
+      token_type: tokens.token_type || 'Bearer',
+      scope: tokens.scope,
+    };
+
+    await saveTokens(tokenData);
     state.auth = oauth2Client;
   };
 

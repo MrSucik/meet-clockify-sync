@@ -44,6 +44,39 @@ const envSchema = z.object({
     .optional()
     .default('false')
     .transform((val) => val === 'true' || val === '1'),
+
+  // Database Configuration
+  DATABASE_URL: z.string().url('DATABASE_URL must be a valid PostgreSQL connection string'),
+
+  // Redis Configuration
+  REDIS_URL: z.string().url('REDIS_URL must be a valid Redis connection string'),
+
+  // Server Configuration
+  SERVER_PORT: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .refine((val) => !Number.isNaN(val) && val >= 1 && val <= 65535, {
+      message: 'SERVER_PORT must be a number between 1 and 65535',
+    }),
+
+  // Scheduler Configuration
+  SYNC_SCHEDULE: z
+    .string()
+    .min(1, 'SYNC_SCHEDULE is required')
+    .refine(
+      (val) => {
+        // Basic validation for cron pattern (5 parts: minute hour day month weekday)
+        const parts = val.trim().split(/\s+/);
+        return parts.length === 5;
+      },
+      {
+        message: 'SYNC_SCHEDULE must be a valid cron pattern (e.g., "0 * * * *")',
+      },
+    ),
+
+  // Basic Authentication
+  BASIC_AUTH_USERNAME: z.string().min(1, 'BASIC_AUTH_USERNAME is required'),
+  BASIC_AUTH_PASSWORD: z.string().min(1, 'BASIC_AUTH_PASSWORD is required'),
 });
 
 // Inferred type

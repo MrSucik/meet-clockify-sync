@@ -101,7 +101,9 @@ async function cleanupGoogleMeetEntries() {
 
   console.log('⚠️  CONFIRMATION REQUIRED\n');
   console.log(`You are about to delete ${meetEntries.length} Google Meet entries.`);
-  console.log(`Your other ${allEntries.length - meetEntries.length} entries will NOT be touched.\n`);
+  console.log(
+    `Your other ${allEntries.length - meetEntries.length} entries will NOT be touched.\n`,
+  );
 
   const confirmation1 = await promptUser(
     `Type the number of entries to delete (${meetEntries.length}) to continue: `,
@@ -112,9 +114,7 @@ async function cleanupGoogleMeetEntries() {
     return;
   }
 
-  const confirmation2 = await promptUser(
-    '\nType "DELETE GOOGLE MEET ENTRIES" to proceed: ',
-  );
+  const confirmation2 = await promptUser('\nType "DELETE GOOGLE MEET ENTRIES" to proceed: ');
 
   if (confirmation2 !== 'DELETE GOOGLE MEET ENTRIES') {
     console.log('\n❌ Confirmation failed. Aborting cleanup.');
@@ -128,11 +128,7 @@ async function cleanupGoogleMeetEntries() {
 
   for (let i = 0; i < meetEntries.length; i++) {
     const entry = meetEntries[i];
-    const success = await deleteTimeEntry(
-      entry.workspaceId,
-      entry.id,
-      env.CLOCKIFY_API_TOKEN,
-    );
+    const success = await deleteTimeEntry(entry.workspaceId, entry.id, env.CLOCKIFY_API_TOKEN);
 
     if (success) {
       deletedCount++;
@@ -170,7 +166,9 @@ async function cleanupGoogleMeetEntries() {
     console.log(`⚠️  ${remainingMeetEntries.length} Google Meet entries still remain.`);
   }
 
-  console.log(`✅ Your other ${verifyEntries.length - remainingMeetEntries.length} entries are intact.\n`);
+  console.log(
+    `✅ Your other ${verifyEntries.length - remainingMeetEntries.length} entries are intact.\n`,
+  );
 }
 
 cleanupGoogleMeetEntries().catch((error) => {
